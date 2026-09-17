@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>煙火 AR</title>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    #ar-container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+
+    #message {
+      position: fixed;
+      top: 20px;
+      left: 0;
+      width: 100%;
+      text-align: center;
+      color: white;
+      font-size: 18px;
+      z-index: 20;
+      pointer-events: none;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+      display: none; /* 啟動後才顯示 */
+    }
+
+    /* 解決 iOS 鏡頭限制的啟動遮罩 */
+    #start-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.9);
+      z-index: 999;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: white;
+    }
+
+    #start-btn {
+      padding: 14px 28px;
+      font-size: 18px;
+      background: #ff4757;
+      color: white;
+      border: none;
+      border-radius: 30px;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(255, 71, 87, 0.4);
+      font-weight: bold;
+    }
+  </style>
+</head>
+
+<body>
+
+<div id="start-overlay">
+  <h2>🎇 煙火 AR 體驗</h2>
+  <p style="margin-bottom: 20px; color: #ccc;">點擊下方按鈕以開啟相機功能</p>
+  <button id="start-btn">開啟相機並開始</button>
+</div>
+
+<div id="ar-container"></div>
+<div id="message">請將手機對準煙火圖紙</div>
+
+<!-- Three.js -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<!-- MindAR -->
+<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
+
+<script>
+  let mindarThree;
+  let anchor;
+  let fireworks = [];
+  let activeParticles = [];
+
+  function createFirework(x, z) {
+    const group = new THREE.Group();
+
+    // 火箭本體
+    const bodyGeometry = new THREE.CylinderGeometry(0.07, 0.09, 0.35, 16);
+    const bodyMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+    group.add(body);
+
+    // 火箭頭
+    const noseGeometry = new THREE.ConeGeometry(0.09, 0.16, 16);
+    const nose = new THREE.Mesh(noseGeometry, bodyMaterial);
+    nose.position.y = 0.255;
+    group.add(nose);
+
+    // 火焰
+    const flameGeometry = new THREE.ConeGeometry(0.06, 0.20, 12);
+    const flameMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+    const flame = new THREE.Mesh(flameGeometry, flameMaterial);
+    flame.rotation.z = Math.PI;
+    flame.position.y = -0.27;
+    group.add(flame);
+
+    group.position.set(x, -0.25, z);
+    group.visible = false;
+    anchor.group.add(group);
+
+    fireworks.push({
+      group: group,
+      startTime: 0,
+      state: "waiting",
+      x: x,
+      z: z
+    });
+  }
+
+  function createExplosion(position) {
+    const groupParticles = [];
+
+    for (let i = 0; i < 70; i++) {
+      const geometry = new THREE.SphereGeometry(0.025, 6, 6);
+      const material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(Math.random(), Math.random(), Math.random())
+      });
+      const particle = new THREE.Mesh(geometry, material);
+      particle.position.copy(position);
+
+      particle.userData.velocity = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.03,
+        (Math.random() - 0.5) * 0.03,
+        (Math.random() - 0.5) * 0.03
+      );
+
+      anchor.group.add(particle);
+      groupParticles.push(particle);
+      activeParticles.push(particle);
+    }
+
+    setTimeout(() => {
+      groupParticles.forEach(p => {
+        anchor.group.remove(p);
+        p.geometry.dispose();
+        p.material.dispose();
+        const index = activeParticles.indexOf(p);
+        if (index > -1) activeParticles.splice(index, 1);
+      });
+    }, 2500);
+  }
+
+  async function startAR() {
+    try {
+      mindarThree = new MindARThree({
+        container: document.querySelector("#ar-container"),
+        imageTargetSrc: "./targets.mind", // 請確保此檔案與 HTML 在同一個目錄
+        uiLoading: "yes",
+        uiScanning: "yes",
+        uiError: "yes"
+      });
+
+      const { renderer, scene, camera } = mindarThree;
+      anchor = mindarThree.addAnchor(0);
+
+      createFirework(-0.45, 0);
+      createFirework(0, 0);
+      createFirework(0.45, 0);
+
+      anchor.onTargetFound = () => {
+        document.querySelector("#message").innerText = "🎆 找到圖紙！煙火準備發射！";
+        fireworks.forEach((firework, index) => {
+          firework.group.visible = true;
+          firework.state = "launch";
+          firework.startTime = performance.now() + index * 900;
+        });
+      };
+
+      anchor.onTargetLost = () => {
+        document.querySelector("#message").innerText = "請將手機對準煙火圖紙";
+        fireworks.forEach(f => {
+          f.group.visible = false;
+          f.state = "waiting";
+        });
+      };
+
+      // 啟動 AR（必須由 Click 事件觸發）
+      await mindarThree.start();
+
+      renderer.setAnimationLoop(() => {
+        const now = performance.now();
+
+        // 煙火動畫
+        fireworks.forEach(firework => {
+          if (firework.state === "launch" && now >= firework.startTime) {
+            const elapsed = (now - firework.startTime) / 1000;
+            firework.group.position.y = -0.25 + elapsed * 0.9;
+
+            if (elapsed > 1.0) {
+              createExplosion(firework.group.position.clone());
+              firework.group.visible = false;
+              firework.state = "done";
+            }
+          }
+        });
+
+        // 爆炸粒子位置更新
+        activeParticles.forEach(p => {
+          p.position.add(p.userData.velocity);
+        });
+
+        renderer.render(scene, camera);
+      });
+
+    } catch (err) {
+      alert("AR 啟動失敗：請確認已給予相機權限，且 targets.mind 檔案存在。\n錯誤訊息：" + err.message);
+      console.error(err);
+    }
+  }
+
+  // 綁定點擊事件以符合 Mobile Browser 規範
+  document.querySelector("#start-btn").addEventListener("click", () => {
+    document.querySelector("#start-overlay").style.display = "none";
+    document.querySelector("#message").style.display = "block";
+    startAR();
+  });
+</script>
+
+</body>
+</html>
